@@ -1,0 +1,86 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGOUT
+  USER_REGISTER
+  USER_UPDATE
+  USER_DELETE
+  FILE_UPLOAD
+  FILE_DELETE
+  FILE_DOWNLOAD
+  PASSWORD_CHANGE
+  TOKEN_REFRESH
+}
+
+model User {
+  id            String      @id @default(uuid())
+  email         String      @unique
+  password      String
+  role          UserRole    @default(USER)
+  isActive      Boolean     @default(true)
+  lastLoginAt   DateTime?
+  lastLoginIp   String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  auditLogs     AuditLog[]
+  files         FileMetadata[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model AuditLog {
+  id           String      @id @default(uuid())
+  action       AuditAction
+  userId       String?
+  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  metadata     Json?
+  ipAddress    String
+  userAgent    String?
+  success      Boolean     @default(true)
+  errorMessage String?
+  createdAt    DateTime    @default(now())
+
+  @@index([action])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model FileMetadata {
+  id           String    @id @default(uuid())
+  filename     String
+  originalName String
+  mimeType     String
+  size         BigInt
+  storageKey   String
+  bucket       String?
+  uploadedBy   String
+  uploader     User      @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
+  isPublic     Boolean   @default(false)
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([uploadedBy])
+  @@index([createdAt])
+  @@map("file_metadata")
+}
+
