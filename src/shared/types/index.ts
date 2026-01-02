@@ -17,6 +17,7 @@ export interface AuthTokens {
 export interface JWTPayload {
   userId: string;
   email: string;
+  role?: string;
   iat?: number;
   exp?: number;
 }

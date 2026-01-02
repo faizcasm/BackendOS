@@ -14,3 +14,7 @@ coverage/
 *.swo
 uploads/*
 !uploads/.gitkeep
+prisma/migrations/
+.prisma/
+
+/src/generated/prisma
