@@ -1,5 +1,8 @@
 # BackendOS
 
+[![npm version](https://img.shields.io/npm/v/backendos.svg)](https://www.npmjs.com/package/backendos)
+[![npm downloads](https://img.shields.io/npm/dm/backendos.svg)](https://www.npmjs.com/package/backendos)
+
 > A modular monolith backend platform providing ready-to-use infrastructure features for any SaaS application.
 
 ## 🚀 Features
@@ -46,6 +49,14 @@ src/
 ```
 
 ## 🛠️ Installation
+
+### Install from npm (Recommended)
+
+```bash
+npm i backendos
+```
+
+### Or clone from GitHub
 
 ```bash
 # Clone the repository
