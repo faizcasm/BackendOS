@@ -11,7 +11,7 @@ BackendOS is a production-ready backend platform that includes all essential inf
 
 - **🔐 Authentication** - JWT-based auth with access and refresh tokens, password hashing, OAuth2-ready
 - **⚡ Rate Limiting** - Configurable rate limiters with multiple strategies (IP-based, user-based)
-- **💾 Caching** - Redis-based caching with automatic in-memory fallback
+- **💾 Caching** - Redis-based caching with automatic in-memory fallback. 
 - **⏰ Background Jobs** - Job queuing and scheduling with Bull and Redis
 - **📁 File Uploads** - Secure file upload handling with validation and storage abstraction
 - **📝 Logging** - Structured logging with Winston, multiple transports and log levels
