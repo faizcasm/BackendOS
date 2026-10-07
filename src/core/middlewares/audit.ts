@@ -33,21 +33,21 @@ export const createAuditLog = async (
 export const auditMiddleware = (action: AuditAction) => {
   return async (req: Request, res: Response, next: NextFunction) => {
     const originalJson = res.json.bind(res);
-    
+
     res.json = function (data: any) {
       const success = res.statusCode >= 200 && res.statusCode < 400;
       const errorMessage = !success && data?.error ? data.error : undefined;
-      
+
       // Create audit log asynchronously (don't block response)
       createAuditLog(action, req, success, errorMessage, {
         statusCode: res.statusCode,
       }).catch((err) => {
         logger.error('Audit middleware error', { error: err });
       });
-      
+
       return originalJson(data);
     };
-    
+
     next();
   };
 };

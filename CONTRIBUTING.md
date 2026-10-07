@@ -2,32 +2,45 @@
 
 Thank you for your interest in contributing to BackendOS! This guide will help you get started.
 
+Please note that this project is released with a [Code of Conduct](./CODE_OF_CONDUCT.md);
+by participating you agree to abide by its terms.
+
+## Prerequisites
+
+- Node.js **≥ 20** (CI runs on 20 and 22)
+- npm ≥ 10 (ships with Node 20+)
+- PostgreSQL 14+ — only needed for running migrations/seed or exercising auth against a real DB
+- Redis — optional (`REDIS_REQUIRED=false` by default in `.env.example`)
+
 ## Development Setup
 
-1. **Fork and Clone**
+1. **Fork and clone**
    ```bash
    git clone https://github.com/YOUR_USERNAME/BackendOS.git
    cd BackendOS
    ```
 
-2. **Install Dependencies**
+2. **Install dependencies**
    ```bash
    npm install
+   npx prisma generate   # generate the Prisma client (needed before typecheck/build)
    ```
 
-3. **Copy Environment Variables**
+3. **Configure your environment**
    ```bash
    cp .env.example .env
+   # set DATABASE_URL (and strong JWT secrets) in .env
    ```
 
-4. **Build the Project**
+4. **Prepare the database** (optional — the test suite does not need it)
    ```bash
-   npm run build
+   npx prisma migrate dev
+   npm run prisma:seed
    ```
 
-5. **Run Tests**
+5. **Verify everything before you start hacking**
    ```bash
-   npm test
+   npm run lint && npm run format:check && npm run typecheck && npm test && npm run build
    ```
 
 ## Project Structure
@@ -35,17 +48,19 @@ Thank you for your interest in contributing to BackendOS! This guide will help y
 ```
 BackendOS/
 ├── src/
-│   ├── modules/          # Feature modules (modular monolith)
-│   │   ├── auth/        # Authentication module
-│   │   ├── caching/     # Caching module
-│   │   └── ...          # Other modules
-│   ├── shared/          # Shared utilities and types
-│   │   ├── types/      # TypeScript type definitions
-│   │   └── utils/      # Shared utilities
-│   └── core/           # Core application
-├── examples/           # Usage examples
-├── tests/             # Test files
-└── docs/              # Documentation
+│   ├── core/             # app bootstrap, config, db, redis, logger, middlewares, docs
+│   ├── modules/          # feature modules (auth, caching, jobs, file-upload, …)
+│   │   └── <module>/
+│   │       ├── README.md # module documentation
+│   │       ├── index.ts  # public API
+│   │       └── src/      # implementation
+│   ├── shared/           # shared types and utilities
+│   ├── index.ts          # library barrel (side-effect free)
+│   └── server.ts         # executable entrypoint
+├── prisma/               # schema, migrations, seed
+├── tests/                # Jest suites (hermetic — no DB/Redis required)
+├── examples/             # runnable usage examples
+└── monitoring/           # Prometheus + Grafana provisioning
 ```
 
 ## Module Development Guidelines
@@ -213,6 +228,25 @@ describe('MyModule', () => {
    - Ensure CI passes
    - Get approval from maintainers
 
+## Before submitting a pull request
+
+CI must be green for the PR to be merged. Locally, run the same checks:
+
+```bash
+npm run lint           # 0 errors (warnings are tolerated)
+npm run format:check   # Prettier
+npm run typecheck      # tsc for src/ and tests/
+npm test               # Jest — 8 suites, hermetic
+npm run build          # prisma generate + tsc
+```
+
+Also:
+
+- Add or update tests for behaviour changes
+- Update `.env.example` and documentation for new configuration
+- Keep PRs focused; open separate PRs for unrelated changes
+- Update `CHANGELOG.md` for user-facing changes
+
 ## Reporting Issues
 
 When reporting issues, please include:
@@ -251,4 +285,4 @@ By contributing, you agree that your contributions will be licensed under the MI
 - Check existing documentation
 - Look at example code
 
-Thank you for contributing to BackendOS! 🚀
+Thank you for contributing to BackendOS!

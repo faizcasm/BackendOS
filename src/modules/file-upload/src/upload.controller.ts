@@ -1,96 +1,123 @@
-import { Router, Request, Response } from 'express';
-import { FileUploadService } from './upload.service';
+import { Router, type Request, type Response } from 'express';
+import fs from 'fs';
+import { asyncHandler, NotFoundError, ValidationError } from '../../../core/errors';
+import { config } from '../../../core/config';
+import { authenticate } from '../../auth/src/auth.middleware';
+import type { AuthRequest } from '../../../shared/types';
+import { FileUploadService, fileUploadService } from './upload.service';
 
-export const createUploadRoutes = (uploadService: FileUploadService): Router => {
+export const createUploadRoutes = (
+  uploadService: FileUploadService = fileUploadService
+): Router => {
   const router = Router();
-  const uploader = uploadService.createUploader();
+  const uploader = uploadService.middleware;
 
-  // Single file upload
-  router.post('/single', uploader.single('file'), (req: Request, res: Response) => {
-    try {
+  // Every upload route is authenticated: files are owned by a user id.
+  router.use(authenticate);
+
+  const requester = (req: AuthRequest): { userId: string; isAdmin: boolean } => ({
+    userId: req.user!.userId,
+    isAdmin: req.user!.role === 'ADMIN',
+  });
+
+  /**
+   * @route POST /api/upload/single
+   * @field  file — multipart/form-data
+   */
+  router.post(
+    '/single',
+    uploader.single('file'),
+    asyncHandler(async (req: AuthRequest, res: Response) => {
       if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
+        throw new ValidationError('No file uploaded (expected form field "file")');
+      }
+      const file = await uploadService.registerUploadedFile(req.file, requester(req).userId);
+      res.status(201).json({ message: 'File uploaded successfully', file });
+    })
+  );
+
+  /**
+   * @route POST /api/upload/multiple
+   * @field  files — multipart/form-data (max 10)
+   */
+  router.post(
+    '/multiple',
+    uploader.array('files', 10),
+    asyncHandler(async (req: AuthRequest, res: Response) => {
+      const files = req.files;
+      if (!Array.isArray(files) || files.length === 0) {
+        throw new ValidationError('No files uploaded (expected form field "files")');
+      }
+      const uploaded = await Promise.all(
+        files.map((file) => uploadService.registerUploadedFile(file, requester(req).userId))
+      );
+      res.status(201).json({ message: 'Files uploaded successfully', files: uploaded });
+    })
+  );
+
+  /** @route GET /api/upload — list the caller's files */
+  router.get(
+    '/',
+    asyncHandler(async (req: AuthRequest, res: Response) => {
+      const { userId, isAdmin } = requester(req);
+      const files = await uploadService.listFiles(userId, isAdmin);
+      res.json({ files, count: files.length });
+    })
+  );
+
+  /** @route GET /api/upload/:filename/download — stream or redirect to a signed URL */
+  router.get(
+    '/:filename/download',
+    asyncHandler(async (req: AuthRequest, res: Response) => {
+      const { userId, isAdmin } = requester(req);
+      const target = await uploadService.getDownloadTarget(
+        String(req.params.filename),
+        userId,
+        isAdmin
+      );
+
+      if (target.kind === 'redirect') {
+        res.redirect(302, target.url);
+        return;
       }
 
-      res.json({
-        message: 'File uploaded successfully',
-        file: {
-          filename: req.file.filename,
-          originalName: req.file.originalname,
-          size: req.file.size,
-          mimetype: req.file.mimetype,
-          path: req.file.path,
-        },
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+      const stats = fs.statSync(target.path);
+      res.setHeader('Content-Length', String(stats.size));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      fs.createReadStream(target.path).pipe(res);
+    })
+  );
 
-  // Multiple files upload
-  router.post('/multiple', uploader.array('files', 10), (req: Request, res: Response) => {
-    try {
-      if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
-        return res.status(400).json({ error: 'No files uploaded' });
+  /** @route GET /api/upload/:filename — file metadata */
+  router.get(
+    '/:filename',
+    asyncHandler(async (req: AuthRequest, res: Response) => {
+      const { userId, isAdmin } = requester(req);
+      const file = await uploadService.getFile(String(req.params.filename), userId, isAdmin);
+      res.json({ file });
+    })
+  );
+
+  /** @route DELETE /api/upload/:filename */
+  router.delete(
+    '/:filename',
+    asyncHandler(async (req: AuthRequest, res: Response) => {
+      const { userId, isAdmin } = requester(req);
+      const deleted = await uploadService.deleteFile(String(req.params.filename), userId, isAdmin);
+      if (!deleted) {
+        throw new NotFoundError('File not found');
       }
+      res.json({ message: 'File deleted successfully' });
+    })
+  );
 
-      const files = req.files.map(file => ({
-        filename: file.filename,
-        originalName: file.originalname,
-        size: file.size,
-        mimetype: file.mimetype,
-        path: file.path,
-      }));
-
-      res.json({
-        message: 'Files uploaded successfully',
-        files,
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Delete file
-  router.delete('/:filename', async (req: Request, res: Response) => {
-    try {
-      const { filename } = req.params;
-      const deleted = await uploadService.deleteFile(filename);
-
-      if (deleted) {
-        res.json({ message: 'File deleted successfully' });
-      } else {
-        res.status(404).json({ error: 'File not found' });
-      }
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // List files
-  router.get('/', (req: Request, res: Response) => {
-    try {
-      const files = uploadService.listFiles();
-      res.json({ files });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Get file info
-  router.get('/:filename', (req: Request, res: Response) => {
-    try {
-      const { filename } = req.params;
-      const fileInfo = uploadService.getFileInfo(filename);
-
-      if (fileInfo) {
-        res.json(fileInfo);
-      } else {
-        res.status(404).json({ error: 'File not found' });
-      }
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
+  /** @route GET /api/upload/config — upload limits for clients */
+  router.get('/meta/limits', (_req: Request, res: Response) => {
+    res.json({
+      maxFileSize: config.upload.maxFileSize,
+      allowedTypes: config.upload.allowedTypes,
+      storageDriver: config.upload.storageDriver,
+    });
   });
 
   return router;

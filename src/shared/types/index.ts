@@ -9,6 +9,30 @@ export interface User {
   updatedAt: Date;
 }
 
+/** User shape returned by the API (never includes the password hash). */
+export interface PublicUser {
+  id: string;
+  email: string;
+  role: 'USER' | 'ADMIN' | 'MODERATOR' | string;
+  isActive: boolean;
+  lastLoginAt?: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** File metadata returned by the upload module. */
+export interface UploadedFile {
+  id: string;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  storageKey: string;
+  isPublic?: boolean;
+  uploadedBy: string;
+  createdAt?: Date;
+}
+
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
@@ -58,12 +82,17 @@ export interface LogData {
 }
 
 export interface HealthCheck {
-  status: 'healthy' | 'unhealthy';
+  status: 'healthy' | 'degraded' | 'unhealthy';
   timestamp: Date;
+  uptime?: number;
+  environment?: string;
+  version?: string;
   services: {
     [key: string]: {
       status: 'up' | 'down';
       latency?: number;
+      detail?: string;
+      optional?: boolean;
     };
   };
 }

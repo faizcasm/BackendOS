@@ -1,70 +1,67 @@
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { config } from '../config';
 import { logger } from '../logger';
 
-const prismaClientSingleton = () => {
-  return new PrismaClient({
-    log: [
-      {
-        emit: 'event',
-        level: 'query',
-      },
-      {
-        emit: 'event',
-        level: 'error',
-      },
-      {
-        emit: 'event',
-        level: 'warn',
-      },
-    ],
-  });
+/**
+ * Prisma 7 uses the Rust-free "client" engine, which requires a driver
+ * adapter. `@prisma/adapter-pg` gives us a normal `pg` connection pool.
+ */
+const createClient = (): PrismaClient => {
+  const adapter = new PrismaPg(config.db.url ? { connectionString: config.db.url } : {});
+
+  const client = new PrismaClient({ adapter });
+
+  if (config.isDev) {
+    // Query events are engine-dependent; attach defensively.
+    const attach = (
+      client as unknown as {
+        $on?: (event: string, callback: (event: unknown) => void) => void;
+      }
+    ).$on;
+
+    attach?.call(client, 'query', (event: unknown) => {
+      const { query, duration } = event as { query?: string; duration?: number };
+      logger.debug('database query', { query, durationMs: duration });
+    });
+  }
+
+  return client;
 };
 
 declare global {
-  var prismaGlobal: undefined | ReturnType<typeof prismaClientSingleton>;
+  // eslint-disable-next-line no-var
+  var prismaGlobal: PrismaClient | undefined;
 }
 
-export const prisma = globalThis.prismaGlobal ?? prismaClientSingleton();
+/**
+ * App-wide singleton. Reusing the instance (also across hot reloads in
+ * development) prevents connection pool exhaustion.
+ */
+export const prisma: PrismaClient = globalThis.prismaGlobal ?? createClient();
+globalThis.prismaGlobal = prisma;
 
-if (process.env.NODE_ENV !== 'production') {
-  globalThis.prismaGlobal = prisma;
-}
-
-// Log database queries in development
-if (process.env.NODE_ENV === 'development') {
-  prisma.$on('query' as never, (e: any) => {
-    logger.debug('Database Query', {
-      query: e.query,
-      duration: `${e.duration}ms`,
-    });
-  });
-}
-
-// Log database errors
-prisma.$on('error' as never, (e: any) => {
-  logger.error('Database Error', { error: e.message });
-});
-
-// Log database warnings
-prisma.$on('warn' as never, (e: any) => {
-  logger.warn('Database Warning', { message: e.message });
-});
-
+/** Verifies connectivity and warms the pool; throws when unreachable. */
 export const initializeDatabase = async (): Promise<void> => {
-  try {
-    await prisma.$connect();
-    logger.info('✓ Database connected successfully');
-  } catch (error) {
-    logger.error('✗ Database connection failed', { error });
-    throw error;
-  }
+  await prisma.$queryRaw`SELECT 1`;
+  logger.info('database connected', { url: redact(config.db.url) });
 };
 
 export const closeDatabase = async (): Promise<void> => {
   try {
     await prisma.$disconnect();
-    logger.info('✓ Database connection closed');
+    logger.info('database disconnected');
   } catch (error) {
-    logger.error('✗ Error closing database', { error });
+    logger.warn('error while closing database', { message: (error as Error).message });
+  }
+};
+
+const redact = (url: string): string => {
+  if (!url) return 'unset';
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.username}:***@${parsed.host}${parsed.pathname}`;
+  } catch {
+    return 'invalid-url';
   }
 };

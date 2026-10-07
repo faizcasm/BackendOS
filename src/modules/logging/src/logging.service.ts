@@ -1,63 +1,30 @@
-import winston from 'winston';
-import { config } from '../../../shared/utils/config';
-import { LogData } from '../../../shared/types';
+import { logger, type Logger } from '../../../core/logger';
+import type { LogData } from '../../../shared/types';
 
+/**
+ * Thin façade over the shared Winston instance so modules can depend on a
+ * service object (and be mocked in tests) while still writing to one logger.
+ */
 export class LoggingService {
-  private logger: winston.Logger;
+  private readonly logger: Logger;
 
-  constructor() {
-    const logFormat = winston.format.combine(
-      winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-      winston.format.errors({ stack: true }),
-      winston.format.splat(),
-      winston.format.json()
-    );
-
-    this.logger = winston.createLogger({
-      level: config.log.level,
-      format: logFormat,
-      defaultMeta: { service: 'backendos' },
-      transports: [
-        new winston.transports.Console({
-          format: winston.format.combine(
-            winston.format.colorize(),
-            winston.format.printf(({ timestamp, level, message, ...metadata }) => {
-              let msg = `${timestamp} [${level}]: ${message}`;
-              if (Object.keys(metadata).length > 0) {
-                msg += ` ${JSON.stringify(metadata)}`;
-              }
-              return msg;
-            })
-          ),
-        }),
-        new winston.transports.File({ 
-          filename: 'logs/error.log', 
-          level: 'error',
-          maxsize: 5242880, // 5MB
-          maxFiles: 5,
-        }),
-        new winston.transports.File({ 
-          filename: 'logs/combined.log',
-          maxsize: 5242880, // 5MB
-          maxFiles: 5,
-        }),
-      ],
-    });
+  constructor(context: Record<string, unknown> = {}) {
+    this.logger = Object.keys(context).length > 0 ? logger.child(context) : logger;
   }
 
-  debug(message: string, metadata?: Record<string, any>): void {
+  debug(message: string, metadata?: Record<string, unknown>): void {
     this.logger.debug(message, metadata);
   }
 
-  info(message: string, metadata?: Record<string, any>): void {
+  info(message: string, metadata?: Record<string, unknown>): void {
     this.logger.info(message, metadata);
   }
 
-  warn(message: string, metadata?: Record<string, any>): void {
+  warn(message: string, metadata?: Record<string, unknown>): void {
     this.logger.warn(message, metadata);
   }
 
-  error(message: string, metadata?: Record<string, any>): void {
+  error(message: string, metadata?: Record<string, unknown>): void {
     this.logger.error(message, metadata);
   }
 
@@ -65,7 +32,7 @@ export class LoggingService {
     this.logger.log({
       level: data.level,
       message: data.message,
-      ...data.metadata,
+      ...(data.metadata ?? {}),
     });
   }
 }

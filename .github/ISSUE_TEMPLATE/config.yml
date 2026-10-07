@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/faizcasm/BackendOS/security/advisories/new
+    about: Please report security vulnerabilities privately via GitHub Security Advisories.
+  - name: Questions & discussion
+    url: https://github.com/faizcasm/BackendOS/discussions
+    about: Ask usage questions or discuss ideas (no bugs/feature requests here).

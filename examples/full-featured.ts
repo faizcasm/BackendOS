@@ -1,6 +1,6 @@
 /**
  * Full Featured Example
- * 
+ *
  * Demonstrates all BackendOS modules working together
  */
 
@@ -15,14 +15,18 @@ import { loggingModule } from '../src/modules/logging';
 // Example: Using the caching module
 async function cacheExample() {
   console.log('\n=== Caching Example ===');
-  
+
   // Set a value
-  await cachingModule.service.set('user:123', {
-    id: '123',
-    name: 'John Doe',
-    email: 'john@example.com',
-  }, { ttl: 300 });
-  
+  await cachingModule.service.set(
+    'user:123',
+    {
+      id: '123',
+      name: 'John Doe',
+      email: 'john@example.com',
+    },
+    { ttl: 300 }
+  );
+
   // Get the value
   const user = await cachingModule.service.get('user:123');
   console.log('Cached user:', user);
@@ -31,37 +35,37 @@ async function cacheExample() {
 // Example: Using the jobs module
 async function jobsExample() {
   console.log('\n=== Jobs Example ===');
-  
+
   // Define a job processor
   jobsModule.service.processJobs('email', async (job) => {
     console.log('Processing email job:', job.data);
     // Simulate sending email
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     return { sent: true };
   });
-  
+
   // Add jobs
   await jobsModule.service.addJob('email', {
     to: 'user@example.com',
     subject: 'Welcome to BackendOS!',
     body: 'Thank you for trying our platform.',
   });
-  
+
   console.log('Email job added to queue');
 }
 
 // Example: Using AI helpers (requires API keys)
 async function aiExample() {
   console.log('\n=== AI Helpers Example ===');
-  
+
   try {
     // Using a prompt template
     const prompt = aiHelpersModule.service.getPrompt('code-review', {
       code: 'function add(a, b) { return a + b; }',
     });
-    
+
     console.log('Generated prompt:', prompt);
-    
+
     // List available templates
     const templates = aiHelpersModule.service.listPromptTemplates();
     console.log('Available templates:', templates);
@@ -73,52 +77,50 @@ async function aiExample() {
 // Example: Using file upload
 function fileUploadExample() {
   console.log('\n=== File Upload Example ===');
-  
+
   const app = backendOS.getApp();
-  
+
   // Add a custom upload route
-  app.post('/custom-upload', 
-    fileUploadModule.middleware.single('file'),
-    (req: any, res) => {
-      if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-      }
-      
-      loggingModule.service.info('File uploaded', {
+  app.post('/custom-upload', fileUploadModule.middleware.single('file'), (req: any, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    loggingModule.service.info('File uploaded', {
+      filename: req.file.filename,
+      size: req.file.size,
+    });
+
+    res.json({
+      message: 'File uploaded successfully',
+      file: {
         filename: req.file.filename,
         size: req.file.size,
-      });
-      
-      res.json({
-        message: 'File uploaded successfully',
-        file: {
-          filename: req.file.filename,
-          size: req.file.size,
-        },
-      });
-    }
-  );
-  
+      },
+    });
+  });
+
   console.log('Custom upload route added');
 }
 
 // Example: Using authentication with caching
 function authWithCacheExample() {
   console.log('\n=== Auth + Cache Example ===');
-  
+
   const app = backendOS.getApp();
-  
-  // Cached user profile endpoint
-  app.get('/profile',
+
+  // Cached user profile endpoint (keyed per user so responses never leak)
+  app.get(
+    '/profile',
     authenticate,
-    cachingModule.middleware(60), // Cache for 60 seconds
+    cachingModule.middleware(60, (req: any) => `profile:${req.user?.userId}`),
     async (req: any, res) => {
-      const user = authModule.service.getUserById(req.user.userId);
-      
+      const user = await authModule.service.getUserById(req.user.userId);
+
       if (!user) {
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(404).json({ error: 'User not found', code: 'NOT_FOUND' });
       }
-      
+
       res.json({
         id: user.id,
         email: user.email,
@@ -126,43 +128,46 @@ function authWithCacheExample() {
       });
     }
   );
-  
+
   console.log('Cached profile endpoint added');
 }
 
 // Main function
 async function main() {
   console.log('🚀 Starting Full Featured BackendOS Example\n');
-  
+
   // Start the main application
   await backendOS.start();
-  
+
   // Wait a bit for initialization
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
   // Run examples
   await cacheExample();
   await jobsExample();
   await aiExample();
   fileUploadExample();
   authWithCacheExample();
-  
+
   console.log(`
 ✅ All examples loaded!
 
 API Endpoints:
-- GET  /                     - API info
-- POST /auth/register        - Register user
-- POST /auth/login           - Login user
-- GET  /auth/me              - Get current user (protected)
-- POST /custom-upload        - Upload file
-- GET  /profile              - User profile (cached)
-- GET  /health               - Health check
-- GET  /health/metrics       - System metrics
-- POST /api/upload/single    - Single file upload
-- POST /api/upload/multiple  - Multiple file upload
-- POST /api/ai/complete      - AI completion
-- GET  /api/ai/templates     - List AI templates
+- GET  /                       - API info
+- GET  /api/docs               - Interactive API documentation
+- POST /api/auth/register      - Register user
+- POST /api/auth/login         - Login user
+- POST /api/auth/refresh       - Rotate refresh token
+- GET  /api/auth/me            - Get current user (protected)
+- POST /custom-upload          - Custom upload route
+- GET  /profile                - User profile (cached per user)
+- GET  /api/health             - Health check
+- GET  /api/health/metrics     - System metrics (JSON)
+- GET  /metrics                - Prometheus metrics
+- POST /api/upload/single      - Single file upload (requires auth)
+- POST /api/upload/multiple    - Multiple file upload (requires auth)
+- POST /api/ai/complete        - AI completion
+- GET  /api/ai/templates       - List AI templates
 
 Try these commands:
 # Register a user
@@ -177,6 +182,9 @@ curl -X POST http://localhost:3000/api/auth/login \\
 
 # Health check
 curl http://localhost:3000/api/health
+
+# Interactive docs
+open http://localhost:3000/api/docs
 
 # System metrics
 curl http://localhost:3000/api/health/metrics

@@ -5,16 +5,16 @@ build/
 logs/*.log
 !logs/.gitkeep
 .env
-.env.local
+.env.*
+!.env.example
 .DS_Store
 coverage/
 .vscode/
 .idea/
 *.swp
 *.swo
+*.tsbuildinfo
 uploads/*
 !uploads/.gitkeep
-prisma/migrations/
-.prisma/
 
 /src/generated/prisma

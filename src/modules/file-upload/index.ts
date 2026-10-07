@@ -1,32 +1,36 @@
-import { Router } from 'express';
-import { FileUploadService } from './src/upload.service';
+import type { Router } from 'express';
+import { FileUploadService, fileUploadService } from './src/upload.service';
 import { createUploadRoutes } from './src/upload.controller';
-import { ModuleMetadata } from '../../shared/types';
+import type { ModuleMetadata } from '../../shared/types';
+
+export * from './src/upload.service';
+export * from './src/upload.controller';
+export * from './src/s3-storage.service';
 
 export class FileUploadModule {
   public readonly metadata: ModuleMetadata = {
     name: 'file-upload',
-    version: '1.0.0',
-    description: 'File upload and management module',
+    version: '2.0.0',
+    description: 'Authenticated file uploads with validation and ownership tracking',
     enabled: true,
   };
 
   public readonly service: FileUploadService;
   public readonly router: Router;
-  public readonly middleware: ReturnType<FileUploadService['createUploader']>;
+  public readonly middleware: FileUploadService['middleware'];
 
   constructor() {
-    this.service = new FileUploadService();
+    this.service = fileUploadService;
     this.router = createUploadRoutes(this.service);
-    this.middleware = this.service.createUploader();
+    this.middleware = this.service.middleware;
   }
 
   async initialize(): Promise<void> {
-    console.log(`[${this.metadata.name}] Module initialized`);
+    // Storage is initialised lazily by the service constructor (upload dir).
   }
 
   async shutdown(): Promise<void> {
-    console.log(`[${this.metadata.name}] Module shutdown`);
+    // Disk storage needs no teardown.
   }
 }
 

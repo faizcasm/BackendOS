@@ -41,6 +41,7 @@ model User {
   
   auditLogs     AuditLog[]
   files         FileMetadata[]
+  refreshTokens RefreshToken[]
 
   @@index([email])
   @@map("users")
@@ -66,7 +67,7 @@ model AuditLog {
 
 model FileMetadata {
   id           String    @id @default(uuid())
-  filename     String
+  filename     String    @unique
   originalName String
   mimeType     String
   size         BigInt
@@ -82,5 +83,24 @@ model FileMetadata {
   @@index([uploadedBy])
   @@index([createdAt])
   @@map("file_metadata")
+}
+
+/// Rotating refresh sessions. Only the SHA-256 hash of the token is stored,
+/// so a database leak cannot be replayed as a login.
+model RefreshToken {
+  id                 String    @id @default(uuid())
+  tokenHash          String    @unique
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent          String?
+  ipAddress          String?
+  expiresAt          DateTime
+  revokedAt          DateTime?
+  replacedByTokenHash String?
+  createdAt          DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
 }
 

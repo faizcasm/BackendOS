@@ -1,466 +1,224 @@
 # Deployment Guide
 
-This guide covers deploying BackendOS to various platforms.
+This guide covers running BackendOS in production. The service is a single
+Node.js process backed by PostgreSQL (required) and Redis (optional).
 
 ## Prerequisites
 
-- Node.js 18+ installed
-- Redis server (for caching and jobs)
-- Production environment variables configured
+- Node.js ≥ 20 (or the official Docker image)
+- PostgreSQL 14+
+- Redis 6+ (optional — set `REDIS_REQUIRED=false` if you skip it)
+- A reverse proxy terminating TLS (nginx, Caddy, Traefik, ALB, …)
 
-## Environment Configuration
+## 1. Environment configuration
 
-Create a `.env` file with production values:
+All configuration comes from the environment and is validated by Joi at boot.
+See [`.env.example`](./.env.example) for the full list.
+
+**Production boot fails fast** if `NODE_ENV=production` and either:
+
+- `JWT_SECRET` or `JWT_REFRESH_SECRET` still contains a placeholder value, or
+- `DATABASE_URL` is missing.
+
+Generate strong secrets:
 
 ```bash
-# Server
-PORT=3000
+node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(48).toString('hex'))"
+node -e "console.log('JWT_REFRESH_SECRET=' + require('crypto').randomBytes(48).toString('hex'))"
+```
+
+Minimum set for production:
+
+```env
 NODE_ENV=production
+PORT=3000
 
-# JWT - Use strong, unique secrets
-JWT_SECRET=<generate-strong-secret>
-JWT_REFRESH_SECRET=<generate-strong-secret>
-JWT_EXPIRES_IN=15m
-JWT_REFRESH_EXPIRES_IN=7d
+DATABASE_URL=postgresql://user:password@db-host:5432/backendos?schema=public
+JWT_SECRET=<64+ random chars>
+JWT_REFRESH_SECRET=<64+ random chars>
 
-# Redis
-REDIS_HOST=your-redis-host
+REDIS_HOST=redis-host
 REDIS_PORT=6379
-REDIS_PASSWORD=your-redis-password
+REDIS_PASSWORD=<if your redis requires auth>
+REDIS_REQUIRED=true
 
-# Rate Limiting
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
-
-# File Upload
-MAX_FILE_SIZE=10485760
-UPLOAD_DIR=./uploads
-
-# AI Services (Optional)
-OPENAI_API_KEY=your-openai-key
-ANTHROPIC_API_KEY=your-anthropic-key
-
-# Logging
 LOG_LEVEL=info
+CORS_ORIGINS=https://app.example.com
+METRICS_ENABLED=true
+# METRICS_TOKEN=<random>     # protects GET /metrics
 ```
 
-## Building for Production
+Never commit `.env`. Inject secrets through your orchestrator's secret store.
+
+## 2. Build
 
 ```bash
-# Install dependencies
-npm ci --production
+npm ci
+npx prisma generate   # runs automatically as part of npm run build
+npm run build         # outputs dist/
+```
 
-# Build TypeScript
+Verify with a dry run:
+
+```bash
+NODE_ENV=production JWT_SECRET=... JWT_REFRESH_SECRET=... DATABASE_URL=... node dist/server.js
+```
+
+## 3. Database migrations
+
+Migrations live in `prisma/migrations` and are applied with:
+
+```bash
+npx prisma migrate deploy      # apply all pending migrations (safe/repeatable)
+npm run prisma:seed            # optional: demo/seed data
+```
+
+Run migrations **before** starting new application code (before/after deploy,
+depending on your compatibility strategy). For local development use
+`npx prisma migrate dev` instead, which can create and apply migrations.
+
+## 4. Docker
+
+The repository ships a multi-stage [`Dockerfile`](./Dockerfile):
+
+| Stage | Purpose |
+| --- | --- |
+| `dependencies` | `npm ci` of production dependencies only |
+| `build` | full install + `prisma generate` + `npm run build` (also used as the migration image) |
+| final | non-root `backendos` user (uid 1001), copies `dist/`, `prisma/` and the generated client, `HEALTHCHECK` on `/api/health/live` |
+
+```bash
+docker build -t backendos:2.0.0 .
+docker run -d -p 3000:3000 \
+  -e NODE_ENV=production \
+  -e DATABASE_URL=postgresql://... \
+  -e JWT_SECRET=... -e JWT_REFRESH_SECRET=... \
+  --name backendos backendos:2.0.0
+```
+
+The image runs `node dist/server.js` as a non-root user.
+
+## 5. Docker Compose
+
+[`docker-compose.yml`](./docker-compose.yml) wires everything together:
+
+| Service | Role |
+| --- | --- |
+| `postgres` | PostgreSQL 16 with healthcheck and persistent volume |
+| `redis` | Redis 7 (append-only, 256 MB LRU cap) with healthcheck |
+| `migrate` | one-shot: `prisma migrate deploy` + seed, then exits |
+| `api` | the application; waits for healthy DB/Redis and a successful migration |
+| `prometheus`, `grafana` | optional, `--profile monitoring` |
+
+```bash
+export JWT_SECRET=...
+export JWT_REFRESH_SECRET=...
+
+docker compose up -d --build                     # app stack
+docker compose --profile monitoring up -d        # + Prometheus :9090, Grafana :3001
+docker compose logs -f api
+```
+
+Override host ports and credentials via environment variables
+(`PORT`, `POSTGRES_PORT`, `REDIS_PORT`, `POSTGRES_USER`, …) — see the compose file.
+
+## 6. Without containers (VPS / bare metal)
+
+```bash
+npm ci --omit=dev
 npm run build
-
-# The dist/ folder contains the compiled code
+npx prisma migrate deploy
+npm start            # node dist/server.js
 ```
 
-## Deployment Options
-
-### 1. Traditional VPS/Server
-
-#### Using PM2
+Run it under a process manager, e.g. **PM2**:
 
 ```bash
-# Install PM2 globally
-npm install -g pm2
-
-# Start the application
-pm2 start dist/index.js --name backendos
-
-# Save PM2 configuration
+npm i -g pm2
+pm2 start dist/server.js --name backendos -i 1
 pm2 save
-
-# Setup PM2 to start on boot
 pm2 startup
 ```
 
-PM2 Configuration (`ecosystem.config.js`):
+or as a **systemd** unit:
 
-```javascript
-module.exports = {
-  apps: [{
-    name: 'backendos',
-    script: './dist/index.js',
-    instances: 'max',
-    exec_mode: 'cluster',
-    env: {
-      NODE_ENV: 'production'
-    },
-    error_file: './logs/pm2-error.log',
-    out_file: './logs/pm2-out.log',
-    log_date_format: 'YYYY-MM-DD HH:mm:ss Z'
-  }]
-};
+```ini
+[Unit]
+Description=BackendOS
+After=network.target postgresql.service
 
-// Start with: pm2 start ecosystem.config.js
+[Service]
+Type=simple
+User=backendos
+WorkingDirectory=/srv/backendos
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/backendos/env
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-### 2. Docker Deployment
-
-Create `Dockerfile`:
-
-```dockerfile
-FROM node:18-alpine
-
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci --production
-
-# Copy source code
-COPY . .
-
-# Build TypeScript
-RUN npm run build
-
-# Expose port
-EXPOSE 3000
-
-# Start application
-CMD ["node", "dist/index.js"]
-```
-
-Create `.dockerignore`:
-
-```
-node_modules
-dist
-.env
-.git
-logs
-uploads
-*.log
-```
-
-Build and run:
-
-```bash
-# Build image
-docker build -t backendos .
-
-# Run container
-docker run -d \
-  -p 3000:3000 \
-  --name backendos \
-  --env-file .env \
-  backendos
-```
-
-### 3. Docker Compose
-
-Create `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - REDIS_HOST=redis
-    env_file:
-      - .env
-    depends_on:
-      - redis
-    volumes:
-      - ./uploads:/app/uploads
-      - ./logs:/app/logs
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-
-volumes:
-  redis-data:
-```
-
-Run with:
-
-```bash
-docker-compose up -d
-```
-
-### 4. Cloud Platforms
-
-#### Heroku
-
-```bash
-# Login to Heroku
-heroku login
-
-# Create app
-heroku create your-app-name
-
-# Add Redis addon
-heroku addons:create heroku-redis:mini
-
-# Set environment variables
-heroku config:set JWT_SECRET=your-secret
-heroku config:set NODE_ENV=production
-
-# Deploy
-git push heroku main
-```
-
-`Procfile`:
-
-```
-web: node dist/index.js
-```
-
-#### DigitalOcean App Platform
-
-1. Connect your GitHub repository
-2. Configure build command: `npm run build`
-3. Configure run command: `node dist/index.js`
-4. Add Redis database from marketplace
-5. Set environment variables
-6. Deploy
-
-#### AWS Elastic Beanstalk
-
-```bash
-# Install EB CLI
-pip install awsebcli
-
-# Initialize
-eb init
-
-# Create environment
-eb create backendos-prod
-
-# Deploy
-eb deploy
-```
-
-#### Google Cloud Run
-
-```bash
-# Build container
-gcloud builds submit --tag gcr.io/PROJECT_ID/backendos
-
-# Deploy
-gcloud run deploy backendos \
-  --image gcr.io/PROJECT_ID/backendos \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated
-```
-
-### 5. Kubernetes
-
-Create `k8s/deployment.yaml`:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: backendos
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: backendos
-  template:
-    metadata:
-      labels:
-        app: backendos
-    spec:
-      containers:
-      - name: backendos
-        image: your-registry/backendos:latest
-        ports:
-        - containerPort: 3000
-        env:
-        - name: NODE_ENV
-          value: "production"
-        - name: REDIS_HOST
-          value: "redis-service"
-        envFrom:
-        - secretRef:
-            name: backendos-secrets
-        livenessProbe:
-          httpGet:
-            path: /api/health/live
-            port: 3000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /api/health/ready
-            port: 3000
-          initialDelaySeconds: 5
-          periodSeconds: 5
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: backendos-service
-spec:
-  selector:
-    app: backendos
-  ports:
-  - port: 80
-    targetPort: 3000
-  type: LoadBalancer
-```
-
-Deploy:
-
-```bash
-kubectl apply -f k8s/
-```
-
-## Post-Deployment
-
-### 1. Health Checks
-
-Verify the deployment:
-
-```bash
-# Health check
-curl https://your-domain.com/api/health
-
-# Metrics
-curl https://your-domain.com/api/health/metrics
-```
-
-### 2. Monitoring
-
-Set up monitoring:
-
-- Application logs
-- Error tracking (e.g., Sentry)
-- Uptime monitoring (e.g., UptimeRobot)
-- Performance monitoring (e.g., New Relic, DataDog)
-
-### 3. SSL/TLS
-
-Use a reverse proxy (Nginx, Caddy) or platform SSL:
-
-Nginx example:
+## 7. Reverse proxy example (nginx)
 
 ```nginx
 server {
-    listen 80;
-    server_name your-domain.com;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
     listen 443 ssl http2;
-    server_name your-domain.com;
+    server_name api.example.com;
 
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    client_max_body_size 20m;   # >= MAX_FILE_SIZE
 
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Request-Id $request_id;
     }
+
+    # Keep metrics off the public internet
+    location = /metrics { allow 10.0.0.0/8; deny all; }
 }
 ```
 
-### 4. Backup Strategy
+## 8. Health checks & orchestration
 
-- Regular database backups
-- Redis persistence configuration
-- Upload files backup
-- Configuration backups
+| Endpoint | Use |
+| --- | --- |
+| `GET /api/health/live` | liveness probe — process is up |
+| `GET /api/health/ready` | readiness probe — DB/Redis reachable |
+| `GET /api/health` | aggregated status for dashboards |
+| `GET /metrics` | Prometheus exposition (guard with `METRICS_TOKEN`) |
 
-### 5. Scaling
+The Docker image already declares a `HEALTHCHECK` against `/api/health/live`.
+For Kubernetes, wire `livenessProbe` to `/live` and `readinessProbe` to `/ready`.
 
-Horizontal scaling considerations:
+## 9. Observability
 
-- Use Redis for session storage
-- Share upload directory (NFS, S3)
-- Load balancer configuration
-- Database connection pooling
+- **Logs**: structured JSON via Winston (`LOG_LEVEL`). Ship container stdout to
+  your log collector.
+- **Metrics**: Prometheus scrapes `/metrics`; Grafana dashboards are provisioned
+  from [`monitoring/grafana`](./monitoring/grafana).
+- **Alerting**: alert on 5xx ratio, p95 latency, readiness failures and queue
+  depth (`backendos_jobs_processed_total` by status).
 
-## Troubleshooting
+## 10. Production checklist
 
-### Application won't start
-
-```bash
-# Check logs
-pm2 logs backendos
-# or
-docker logs backendos
-
-# Check environment variables
-pm2 env 0
-
-# Verify Node version
-node --version
-```
-
-### Redis connection issues
-
-```bash
-# Test Redis connection
-redis-cli -h your-redis-host -p 6379 -a your-password ping
-
-# Check Redis logs
-```
-
-### High memory usage
-
-```bash
-# Monitor with PM2
-pm2 monit
-
-# Check for memory leaks
-node --inspect dist/index.js
-```
-
-## Performance Optimization
-
-1. **Enable caching** - Use the caching module
-2. **Connection pooling** - Configure for database
-3. **Compression** - Enable gzip compression
-4. **CDN** - Use CDN for static files
-5. **Clustering** - Use PM2 cluster mode
-
-## Security Checklist
-
-- [ ] Environment variables secured
-- [ ] HTTPS enabled
-- [ ] Rate limiting configured
-- [ ] Security headers enabled (Helmet)
-- [ ] CORS properly configured
-- [ ] Database credentials secured
-- [ ] Redis password set
-- [ ] File upload restrictions enabled
-- [ ] Logs don't contain sensitive data
-- [ ] Regular dependency updates
-
-## Support
-
-For deployment issues:
-- Check application logs
-- Review health check endpoints
-- Consult cloud provider documentation
-- Open an issue on GitHub
-
-Happy deploying! 🚀
+- [ ] Strong, unique `JWT_SECRET` and `JWT_REFRESH_SECRET` (rotated, stored in a secret manager)
+- [ ] `NODE_ENV=production` and boot-time config validation passing
+- [ ] TLS terminated at the proxy; `CORS_ORIGINS` restricted to your front end
+- [ ] `prisma migrate deploy` run as a separate step before rollout
+- [ ] PostgreSQL backups + point-in-time recovery configured
+- [ ] Redis persistence/auth configured (or `REDIS_REQUIRED=false` deliberately)
+- [ ] Rate limiting left enabled on public routes
+- [ ] `/metrics` not publicly reachable
+- [ ] Health probes wired into your orchestrator
+- [ ] Log retention/rotation and error alerting configured
+- [ ] Image built from the multi-stage Dockerfile (non-root, minimal surface)

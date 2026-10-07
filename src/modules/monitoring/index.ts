@@ -1,13 +1,16 @@
-import { Router } from 'express';
+import type { Router } from 'express';
 import { MonitoringService } from './src/monitoring.service';
 import { createMonitoringRoutes } from './src/monitoring.controller';
-import { ModuleMetadata } from '../../shared/types';
+import type { ModuleMetadata } from '../../shared/types';
+
+export * from './src/monitoring.service';
+export * from './src/monitoring.controller';
 
 export class MonitoringModule {
   public readonly metadata: ModuleMetadata = {
     name: 'monitoring',
-    version: '1.0.0',
-    description: 'Health checks and system monitoring module',
+    version: '2.0.0',
+    description: 'Health checks, readiness probes and system metrics',
     enabled: true,
   };
 
@@ -20,11 +23,11 @@ export class MonitoringModule {
   }
 
   async initialize(): Promise<void> {
-    console.log(`[${this.metadata.name}] Module initialized`);
+    this.service.registerDefaultChecks();
   }
 
   async shutdown(): Promise<void> {
-    console.log(`[${this.metadata.name}] Module shutdown`);
+    // Health checks are stateless.
   }
 }
 

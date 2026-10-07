@@ -1,0 +1,38 @@
+# VCS / CI
+.git
+.github
+.gitignore
+
+# Dependencies & build output (rebuilt inside the image)
+node_modules
+dist
+build
+coverage
+
+# Environment & secrets — never bake these into an image
+.env
+.env.*
+!.env.example
+
+# Tests & tooling (not needed in the runtime image)
+tests
+jest.config.js
+eslint.config.mjs
+.prettierrc*
+.prettierignore
+.tsconfig*
+*.tsbuildinfo
+
+# Docs & local artifacts
+*.md
+!README.md
+logs
+*.log
+uploads
+.vscode
+.idea
+.DS_Store
+
+# Docker files themselves
+Dockerfile
+docker-compose*.yml

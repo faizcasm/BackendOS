@@ -1,10 +1,21 @@
 # Security Policy
 
+## Supported Versions
+
+| Version | Supported |
+| --- | --- |
+| 2.x | ✅ |
+| < 2.0 | ❌ (please upgrade) |
+
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in BackendOS, please report it by emailing the maintainers or opening a private security advisory on GitHub.
+Please report security vulnerabilities **privately** through
+[GitHub Security Advisories](https://github.com/faizcasm/BackendOS/security/advisories/new).
 
 **Please do not open public issues for security vulnerabilities.**
+
+We aim to acknowledge reports within 48 hours and to publish a fix (or an
+explanation) within 1 week, depending on severity.
 
 ## Security Best Practices
 
@@ -95,29 +106,45 @@ node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 
 ## Known Security Considerations
 
-### In-Memory Storage
+### Storage of credentials and tokens
 
-The default implementation uses in-memory storage for users. In production:
+- Passwords are hashed with bcrypt (cost factor from `BCRYPT_ROUNDS`).
+- Access tokens are short-lived JWTs; refresh tokens are opaque random values
+  stored **only as SHA-256 hashes** in PostgreSQL, with rotation on every use and
+  reuse detection that revokes the whole token family.
+- Even so, protect `JWT_SECRET`/`JWT_REFRESH_SECRET` — anyone who obtains them can
+  mint tokens.
 
-- Replace with a proper database
-- Implement data persistence
-- Use connection pooling
-- Implement proper error handling
+### Metrics endpoint
 
-### Session Management
+`/metrics` is unauthenticated by default. Set `METRICS_TOKEN` to require a bearer
+token, or disable metrics with `METRICS_ENABLED=false`, when the endpoint is
+reachable from untrusted networks.
 
-- Implement session invalidation
-- Track active sessions
-- Detect concurrent logins
-- Implement session timeout
+### Session management
 
-### AI API Keys
+- `POST /api/auth/logout` revokes one refresh token, `logout-all` revokes all.
+- Changing a password revokes every existing session.
+- If you add device/session tracking, keep revocation server-side — never trust a
+  client-provided session list.
 
-- Store API keys securely
-- Use environment variables
-- Rotate keys regularly
-- Monitor API usage
-- Implement rate limits
+### File storage
+
+- Uploads are authenticated; filenames are sanitized and downloads are resolved
+  inside the upload directory to prevent path traversal.
+- Run malware scanning (e.g. ClamAV) and store files outside the webroot or on S3
+  (`STORAGE_DRIVER=s3`) for anything user-facing.
+
+### AI API keys
+
+- Store `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` in the environment only, rotate them
+  regularly, and disable the AI module (`MODULE_AI_HELPERS=false`) if unused.
+
+### Secrets in this repository
+
+- `.env` is git-ignored; only `.env.example` (with placeholders) is committed.
+- Compose secrets are read from your shell/`.env` and the API refuses to boot in
+  production with placeholder secrets.
 
 ## Security Checklist for Production
 
@@ -138,29 +165,21 @@ The default implementation uses in-memory storage for users. In production:
 
 ## Recommended Tools
 
-- **Snyk** - Vulnerability scanning
-- **OWASP ZAP** - Security testing
-- **npm audit** - Dependency checking
-- **Helmet** - Security headers (included)
-- **Rate Limit** - DDoS protection (included)
-
-## Security Updates
-
-Security updates will be released as soon as possible. Subscribe to repository notifications to stay informed.
+- **npm audit** / **Trivy** / **CodeQL** — all run in CI on every pull request
+- **OWASP ZAP** — endpoint security testing
+- **Helmet** and **express-rate-limit** — included and enabled by default
 
 ## Disclosure Policy
 
-- Report received: Acknowledged within 48 hours
-- Initial assessment: Within 1 week
-- Fix developed: ASAP based on severity
-- Release: Coordinated disclosure
-- Public announcement: After fix is available
+- Report received: acknowledged within 48 hours
+- Initial assessment: within 1 week
+- Fix developed: as fast as severity allows
+- Release: coordinated disclosure — a public advisory is published with the fix
 
 ## Contact
 
-For security concerns, contact the maintainers through:
-- GitHub Security Advisories (preferred)
-- Email to maintainers
-- Private issue reporting
+Report vulnerabilities through
+[GitHub Security Advisories](https://github.com/faizcasm/BackendOS/security/advisories/new).
+For everything else, open a regular issue.
 
 Thank you for helping keep BackendOS secure!

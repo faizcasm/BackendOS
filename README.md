@@ -1,321 +1,227 @@
 # BackendOS
 
-[![npm version](https://img.shields.io/npm/v/backendos.svg)](https://www.npmjs.com/package/backendos)
-[![npm downloads](https://img.shields.io/npm/dm/backendos.svg)](https://www.npmjs.com/package/backendos)
+[![CI](https://github.com/faizcasm/BackendOS/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/faizcasm/BackendOS/actions/workflows/ci-cd.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
+[![Code Style](https://img.shields.io/badge/code%20style-prettier-ff69b4.svg)](https://prettier.io/)
 
-> A modular monolith backend platform providing ready-to-use infrastructure features for any SaaS application.
+> A modular monolith backend platform with authentication, rate limiting, caching, background jobs, file uploads, logging and monitoring — ready to run in production.
 
-## 🚀 Features
+BackendOS is a single Node.js/TypeScript service that ships the infrastructure features every SaaS backend needs, organized into independent modules you can use as a whole or extract later.
 
-BackendOS is a production-ready backend platform that includes all essential infrastructure features out of the box:
+## Features
 
-- **🔐 Authentication** - JWT-based auth with access and refresh tokens, password hashing, OAuth2-ready
-- **⚡ Rate Limiting** - Configurable rate limiters with multiple strategies (IP-based, user-based)
-- **💾 Caching** - Redis-based caching with automatic in-memory fallback. 
-- **⏰ Background Jobs** - Job queuing and scheduling with Bull and Redis
-- **📁 File Uploads** - Secure file upload handling with validation and storage abstraction
-- **📝 Logging** - Structured logging with Winston, multiple transports and log levels
-- **🏥 Monitoring** - Health checks, system metrics, and uptime tracking
-- **🤖 AI Helpers** - Integration with OpenAI and Anthropic (Claude) with prompt templates
+| Module | What it gives you |
+| --- | --- |
+| **Auth** | Registration/login, JWT access tokens, opaque refresh tokens (SHA-256 hashed at rest) with rotation and reuse detection, RBAC (`requireRole`), audit logging — all backed by Prisma/PostgreSQL |
+| **Rate limiting** | Sliding-window limits via `express-rate-limit`, shared across instances with Redis |
+| **Caching** | Redis cache with key prefixing, SCAN-based wildcard invalidation and a cache middleware |
+| **Jobs** | BullMQ queues for background and scheduled work |
+| **File uploads** | Multer uploads with MIME/size validation, path-traversal-safe downloads, local disk or S3-compatible storage (`STORAGE_DRIVER=s3`) |
+| **Logging** | Structured Winston logging with request IDs and quiet-path filtering |
+| **Monitoring** | Liveness/readiness probes, JSON system metrics and a Prometheus `/metrics` endpoint |
+| **AI helpers** | Prompt templates and completions over OpenAI/Anthropic (optional) |
 
-## 🏗️ Architecture
+Cross-cutting: validated environment config (Joi, fail-fast in production), Helmet + CORS + compression, centralized error handling, OpenAPI/Swagger UI at `/api/docs`.
 
-BackendOS follows a **modular monolith** architecture where each feature is:
+## Requirements
 
-- Self-contained in its own module
-- Independently maintainable
-- Easily extractable into a microservice if needed
-- Communicates through well-defined interfaces
+- **Node.js ≥ 20** (CI runs on 20 and 22)
+- **PostgreSQL 14+** (for auth and any Prisma-backed data)
+- **Redis 6+** (optional — set `REDIS_REQUIRED=false` to run without it; caching, shared rate limits and jobs degrade gracefully or disable)
 
-### Module Structure
+## Quick start
 
-```
-src/
-├── modules/           # Feature modules
-│   ├── auth/         # Authentication module
-│   ├── rate-limiting/ # Rate limiting module
-│   ├── caching/      # Caching module
-│   ├── jobs/         # Background jobs module
-│   ├── file-upload/  # File upload module
-│   ├── logging/      # Logging module
-│   ├── monitoring/   # Monitoring module
-│   └── ai-helpers/   # AI integration module
-├── shared/           # Shared utilities and types
-│   ├── types/       # TypeScript type definitions
-│   ├── utils/       # Shared utilities
-│   └── middleware/  # Shared middleware
-└── core/            # Core application
-    └── app.ts       # Main application orchestrator
-```
-
-## 🛠️ Installation
-
-### Install from npm (Recommended)
+### Local development
 
 ```bash
-npm i backendos
-```
-
-### Or clone from GitHub
-
-```bash
-# Clone the repository
 git clone https://github.com/faizcasm/BackendOS.git
 cd BackendOS
-
-# Install dependencies
 npm install
-
-# Copy environment variables
-cp .env.example .env
-
-# Edit .env with your configuration
-nano .env
+cp .env.example .env          # then edit values
+npx prisma migrate dev        # create/apply migrations
+npm run prisma:seed           # optional demo data
+npm run dev                   # http://localhost:3000
 ```
 
-## ⚙️ Configuration
+### Docker Compose
 
-Edit `.env` file to configure the platform:
+The compose file runs PostgreSQL, Redis, a one-shot migration job and the API:
+
+```bash
+# Required: set strong secrets first
+export JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
+export JWT_REFRESH_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
+
+docker compose up -d          # api + postgres + redis + migrations
+docker compose --profile monitoring up -d   # + Prometheus (:9090) and Grafana (:3001)
+```
+
+The API image is a multi-stage, non-root build (`docker build -t backendos .`), and the container health check hits `GET /api/health/live`.
+
+## Configuration
+
+All configuration is environment-driven, validated at boot by Joi, and documented in [`.env.example`](./.env.example). Production boot **fails fast** if placeholder JWT secrets are used or `DATABASE_URL` is missing.
 
 ```env
-# Server
-PORT=3000
 NODE_ENV=development
+PORT=3000
 
-# JWT Configuration
-JWT_SECRET=your-super-secret-jwt-key
-JWT_REFRESH_SECRET=your-refresh-secret-key
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/backendos?schema=public
 
-# Redis (for caching and jobs)
+JWT_SECRET=change-me
+JWT_REFRESH_SECRET=change-me-too
+
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_REQUIRED=false
 
-# Rate Limiting
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
-
-# File Upload
-MAX_FILE_SIZE=10485760
-UPLOAD_DIR=./uploads
-
-# AI Services (Optional)
-OPENAI_API_KEY=your-openai-key
-ANTHROPIC_API_KEY=your-anthropic-key
+STORAGE_DRIVER=local         # or: s3
+LOG_LEVEL=info
+METRICS_ENABLED=true
 ```
 
-## 🚀 Quick Start
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for how configuration and modules fit together.
 
-### Development Mode
+## API
 
-```bash
-npm run dev
+Interactive Swagger documentation is served at **`/api/docs`** when `DOCS_ENABLED=true` (default).
+
+### Health & observability
+
+```http
+GET /api/health          # aggregated health summary
+GET /api/health/live     # liveness probe
+GET /api/health/ready    # readiness probe (DB/Redis)
+GET /api/health/metrics  # JSON process/system metrics
+GET /metrics             # Prometheus exposition (optional METRICS_TOKEN guard)
 ```
 
-### Production Mode
+### Authentication
 
-```bash
-# Build the project
-npm run build
-
-# Start the server
-npm start
+```http
+POST /api/auth/register        { "email", "password" }
+POST /api/auth/login           { "email", "password" }
+POST /api/auth/refresh         { "refreshToken" }      # rotates, detects reuse
+POST /api/auth/logout          { "refreshToken" }
+POST /api/auth/logout-all                                  # revoke all sessions
+GET  /api/auth/me             Authorization: Bearer <token>
+POST /api/auth/change-password Authorization: Bearer <token>
+GET  /api/auth/users          Authorization: Bearer <admin token>
+DELETE /api/auth/me           Authorization: Bearer <token>
 ```
 
-## 📚 API Documentation
+### File uploads
 
-### Authentication Module
-
-#### Register User
-```bash
-POST /api/auth/register
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "securepassword123"
-}
+```http
+POST /api/upload/single           multipart/form-data, field "file"
+POST /api/upload/multiple         multipart/form-data, field "files" (max 10)
+GET  /api/upload/                 list uploaded files
+GET  /api/upload/:filename/download
+DELETE /api/upload/:filename
+GET  /api/upload/meta/limits      current size/type limits
 ```
 
-#### Login
-```bash
-POST /api/auth/login
-Content-Type: application/json
+Upload routes are authenticated and filenames are sanitized against path traversal.
 
-{
-  "email": "user@example.com",
-  "password": "securepassword123"
-}
+### AI helpers
+
+```http
+POST /api/ai/complete           { "prompt", "provider", "model?", "temperature?", "maxTokens?" }
+POST /api/ai/explain            { "path", "method?", "provider" }
+POST /api/ai/analyze-logs       { "logs": [...], "error?", "context?", "provider" }
+GET  /api/ai/templates
+POST /api/ai/template/:name     { "variables", "provider?", "model?", "temperature?" }
 ```
 
-#### Get Current User
-```bash
-GET /api/auth/me
-Authorization: Bearer <access_token>
-```
+## Usage as a library
 
-### File Upload Module
-
-#### Upload Single File
-```bash
-POST /api/upload/single
-Content-Type: multipart/form-data
-file: <file>
-```
-
-#### Upload Multiple Files
-```bash
-POST /api/upload/multiple
-Content-Type: multipart/form-data
-files: <file1>, <file2>, ...
-```
-
-### Monitoring Module
-
-#### Health Check
-```bash
-GET /api/health
-```
-
-#### System Metrics
-```bash
-GET /api/health/metrics
-```
-
-### AI Helpers Module
-
-#### Generate Completion
-```bash
-POST /api/ai/complete
-Content-Type: application/json
-
-{
-  "prompt": "Write a hello world function in Python",
-  "provider": "openai",
-  "model": "gpt-4",
-  "temperature": 0.7
-}
-```
-
-#### List Prompt Templates
-```bash
-GET /api/ai/templates
-```
-
-## 🔧 Using Modules in Your Code
-
-BackendOS modules can be easily integrated into your application:
+Modules are exported from `src/index.ts` (compiled to `dist/index.js`) and can also be embedded in your own Express app:
 
 ```typescript
-import { backendOS } from './core/app';
+import { cachingModule, jobsModule, authModule } from 'backendos';
 
-// Start the server
-await backendOS.start();
-
-// Access modules
-const authModule = backendOS.getModule('auth');
-const cachingModule = backendOS.getModule('caching');
-
-// Use services
 await cachingModule.service.set('key', 'value', { ttl: 300 });
 const value = await cachingModule.service.get('key');
 
-// Add background jobs
-const jobsModule = backendOS.getModule('jobs');
 await jobsModule.service.addJob('email', { to: 'user@example.com' });
 ```
 
-## 🎯 Module-Specific Documentation
-
-Each module has its own README with detailed documentation:
-
-- [Authentication Module](./src/modules/auth/README.md)
-- [Rate Limiting Module](./src/modules/rate-limiting/README.md)
-- [Caching Module](./src/modules/caching/README.md)
-- [Jobs Module](./src/modules/jobs/README.md)
-- [File Upload Module](./src/modules/file-upload/README.md)
-- [Logging Module](./src/modules/logging/README.md)
-- [Monitoring Module](./src/modules/monitoring/README.md)
-- [AI Helpers Module](./src/modules/ai-helpers/README.md)
-
-## 🔐 Security Features
-
-- **Helmet.js** - Security headers
-- **CORS** - Cross-Origin Resource Sharing
-- **Rate Limiting** - DDoS protection
-- **JWT Authentication** - Secure token-based auth
-- **Password Hashing** - bcrypt with salt
-- **File Upload Validation** - Type and size checks
-
-## 🧪 Testing
+Runnable examples live in [`examples/`](./examples):
 
 ```bash
-# Run tests
-npm test
-
-# Run tests in watch mode
-npm run test:watch
+npm run example:basic
+npm run example:full
 ```
 
-## 📦 Building for Production
+## Development
 
 ```bash
-# Build TypeScript
+npm run dev            # ts-node + nodemon
+npm run lint           # ESLint (flat config)
+npm run format         # Prettier write  /  npm run format:check
+npm run typecheck      # tsc for src and tests
+npm test               # Jest (hermetic — no DB/Redis needed)
+npm run test:ci        # Jest + coverage thresholds
+npm run build          # prisma generate + tsc → dist/
+npm start              # node dist/server.js
+```
+
+## Project structure
+
+```
+src/
+├── core/               # app bootstrap, config, db, redis, logger, middlewares, docs
+├── modules/            # feature modules (auth, caching, jobs, file-upload, …)
+├── shared/             # shared types and utilities
+├── index.ts            # library barrel (side-effect free)
+└── server.ts           # executable entrypoint
+prisma/                 # schema, migrations, seed
+tests/                  # Jest suites
+monitoring/             # Prometheus + Grafana provisioning
+examples/               # usage examples
+```
+
+Each module exposes its public API from `index.ts` and keeps internals under `src/`. See [ARCHITECTURE.md](./ARCHITECTURE.md) and the per-module READMEs:
+
+[Auth](./src/modules/auth/README.md) ·
+[Rate limiting](./src/modules/rate-limiting/README.md) ·
+[Caching](./src/modules/caching/README.md) ·
+[Jobs](./src/modules/jobs/README.md) ·
+[File upload](./src/modules/file-upload/README.md) ·
+[Logging](./src/modules/logging/README.md) ·
+[Monitoring](./src/modules/monitoring/README.md) ·
+[AI helpers](./src/modules/ai-helpers/README.md)
+
+## Deployment
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for PM2, Docker, Compose and cloud deployments. In short:
+
+```bash
+npm ci
 npm run build
-
-# The compiled code will be in the dist/ folder
+npx prisma migrate deploy      # apply migrations
+npm start
 ```
 
-## 🐳 Docker Deployment (Coming Soon)
+## Security
 
-```bash
-# Build image
-docker build -t backendos .
+- Helmet security headers, CORS allow-list, compression
+- Global + per-route rate limiting (Redis-backed when available)
+- Bcrypt password hashing, short-lived access tokens, rotating refresh tokens with reuse detection
+- Upload validation, authenticated download/delete, path-traversal protection
+- Non-root Docker image, secrets injected via environment
 
-# Run container
-docker run -p 3000:3000 backendos
-```
+Report vulnerabilities per [SECURITY.md](./SECURITY.md) — please do not open public issues for security reports.
 
-## 🤝 Contributing
+## Contributing
 
-Contributions are welcome! This is a modular monolith, so:
+Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, style, and PR guidelines. All changes must pass `lint`, `typecheck`, `format:check`, tests and build in CI.
 
-1. Each feature should be in its own module
-2. Modules should be self-contained
-3. Follow the existing module structure
-4. Add tests for new features
-5. Update documentation
+## Changelog
 
-## 📝 License
+See [CHANGELOG.md](./CHANGELOG.md).
 
-MIT License - feel free to use this in your projects!
+## License
 
-## 🌟 Roadmap
-
-- [ ] Database abstraction layer (PostgreSQL, MySQL, MongoDB)
-- [ ] WebSocket support
-- [ ] Email service integration
-- [ ] Payment gateway integration
-- [ ] Multi-tenancy support
-- [ ] API documentation with Swagger
-- [ ] Docker and Kubernetes deployment
-- [ ] GraphQL support
-- [ ] Real-time analytics
-- [ ] Admin dashboard
-
-## 💡 Use Cases
-
-Perfect for:
-- SaaS applications
-- API backends
-- Mobile app backends
-- Microservices gateway
-- Prototype backends
-- Production-ready MVPs
-
-## 📧 Support
-
-For issues and questions, please open an issue on GitHub.
-
----
-
-**Built with ❤️ using TypeScript, Express, and modern best practices.**
+[MIT](./LICENSE) © faizcasm

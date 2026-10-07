@@ -1,27 +1,29 @@
-import { JobService } from './src/job.service';
-import { ModuleMetadata } from '../../shared/types';
+import { BullMQService, bullMQService } from './src/bullmq.service';
+import type { ModuleMetadata } from '../../shared/types';
+
+export * from './src/bullmq.service';
 
 export class JobsModule {
   public readonly metadata: ModuleMetadata = {
     name: 'jobs',
-    version: '1.0.0',
-    description: 'Background job processing and task scheduling module',
+    version: '2.0.0',
+    description: 'Background job processing and scheduling with BullMQ',
     enabled: true,
   };
 
-  public readonly service: JobService;
+  public readonly service: BullMQService;
 
   constructor() {
-    this.service = new JobService();
+    this.service = bullMQService;
   }
 
   async initialize(): Promise<void> {
-    console.log(`[${this.metadata.name}] Module initialized`);
+    // Queues are created lazily on first use; Redis availability is checked
+    // there so a missing broker degrades to a 503 instead of a hang.
   }
 
   async shutdown(): Promise<void> {
     await this.service.closeAllQueues();
-    console.log(`[${this.metadata.name}] Module shutdown`);
   }
 }
 

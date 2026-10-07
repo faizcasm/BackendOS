@@ -1,5 +1,54 @@
 # Architecture Guide
 
+## Big Picture
+
+BackendOS is a single Node.js/TypeScript service organized in three layers:
+
+```
+src/
+├── core/                    # Application kernel — shared by every module
+│   ├── app.ts               # Express bootstrap, middleware order, route mounting
+│   ├── config/              # Joi-validated environment config (fail-fast in production)
+│   ├── db/                  # Prisma client (driver adapter) + lifecycle helpers
+│   ├── redis/               # ioredis client, options, reconnect/disconnect handling
+│   ├── logger/              # Winston structured logger + request loggers
+│   ├── errors/              # Typed application errors + HTTP mapping
+│   ├── middlewares/         # security, cors, request-id, logging, metrics,
+│   │                        # rate limit, audit, error/not-found handlers
+│   ├── docs/                # OpenAPI spec + Swagger UI router
+│   └── package.ts           # package.json reader (name/version) for metadata
+├── modules/                 # Feature modules — the product surface
+│   ├── auth/  caching/  jobs/  file-upload/
+│   ├── rate-limiting/  logging/  monitoring/  ai-helpers/
+├── shared/                  # Cross-cutting types and thin utilities
+├── index.ts                 # Library barrel (side-effect free)
+└── server.ts                # Executable entrypoint (reads config, starts server)
+```
+
+### Request pipeline
+
+Middleware is applied in a fixed order in `src/core/app.ts`:
+
+1. `securityHeaders` (Helmet) → `corsMiddleware` → `compression`
+2. `requestIdMiddleware` — assigns/propagates `x-request-id`
+3. Body parsing (JSON/urlencoded with configured `bodyLimit`)
+4. `loggingModule.middleware` and `metricsMiddleware` (when enabled)
+5. Per-route rate limiters and auth chains
+6. Module routers (`/api/health`, `/api/auth`, `/api/upload`, `/api/ai`)
+7. `notFoundHandler` → `errorHandler` (typed errors → JSON responses)
+
+Health probes (`/api/health/*`) and the Prometheus endpoint (`/metrics`) bypass
+logging/metrics middleware to keep noise out of the signal.
+
+### Data layer
+
+- **PostgreSQL via Prisma** is the source of truth (users, refresh tokens, audit
+  trail, module-owned records). Migrations live in `prisma/migrations`; CI/CD
+  applies them with `prisma migrate deploy`.
+- **Redis** is used for caching, shared rate-limit counters and BullMQ. It is
+  optional: with `REDIS_REQUIRED=false` the app boots without it and degrades
+  (in-process fallbacks / disabled queues) instead of crashing.
+
 ## Modular Monolith Principles
 
 BackendOS is built as a modular monolith, which combines the benefits of both monolithic and microservices architectures.
@@ -76,8 +125,8 @@ loggingModule.service.info('Operation completed');
 2. Create README.md with module documentation
 3. Create `src/` subdirectory with service, controller, etc.
 4. Create `index.ts` that exports the module class
-5. Add module to `src/core/app.ts`
-6. Add configuration to `.env.example` and `src/shared/utils/config.ts`
+5. Add module to `src/core/app.ts` (mount its router, if any)
+6. Add any configuration to `src/core/config/index.ts` and document it in `.env.example`
 
 Example module:
 
@@ -159,9 +208,10 @@ describe('AuthService', () => {
 ## Configuration Management
 
 Each module's configuration:
-- Lives in `src/shared/utils/config.ts`
-- Can be toggled on/off via environment variables
-- Has sensible defaults
+- Lives in `src/core/config/index.ts` (single Joi schema; `src/shared/utils/config.ts`
+  is a deprecated re-export of the same object)
+- Can be toggled on/off via environment variables (`MODULE_*`)
+- Has sensible defaults and is validated once at boot
 - Is documented in `.env.example`
 
 ## Error Handling

@@ -1,51 +1,53 @@
-import { Router, Request, Response } from 'express';
-import { MonitoringService } from './monitoring.service';
+import { Router, type Request, type Response } from 'express';
+import { asyncHandler } from '../../../core/errors';
+import type { MonitoringService } from './monitoring.service';
 
 export const createMonitoringRoutes = (monitoringService: MonitoringService): Router => {
   const router = Router();
 
-  // Health check endpoint
-  router.get('/', async (req: Request, res: Response) => {
-    try {
+  /**
+   * @route GET /api/health
+   * Full dependency report. 503 only when a *critical* dependency is down.
+   */
+  router.get(
+    '/',
+    asyncHandler(async (_req: Request, res: Response) => {
       const health = await monitoringService.getHealthStatus();
-      const statusCode = health.status === 'healthy' ? 200 : 503;
-      res.status(statusCode).json(health);
-    } catch (error: any) {
-      res.status(500).json({
-        status: 'unhealthy',
-        error: error.message,
-        timestamp: new Date(),
-      });
-    }
-  });
+      res.status(health.status === 'unhealthy' ? 503 : 200).json(health);
+    })
+  );
 
-  // Readiness check (for Kubernetes)
-  router.get('/ready', async (req: Request, res: Response) => {
-    try {
+  /**
+   * @route GET /api/health/ready — Kubernetes readiness probe
+   */
+  router.get(
+    '/ready',
+    asyncHandler(async (_req: Request, res: Response) => {
       const health = await monitoringService.getHealthStatus();
-      if (health.status === 'healthy') {
-        res.status(200).json({ ready: true });
-      } else {
-        res.status(503).json({ ready: false, services: health.services });
-      }
-    } catch (error: any) {
-      res.status(503).json({ ready: false, error: error.message });
-    }
+      const ready = health.status !== 'unhealthy';
+      res
+        .status(ready ? 200 : 503)
+        .json({ ready, status: health.status, services: health.services });
+    })
+  );
+
+  /**
+   * @route GET /api/health/live — Kubernetes liveness probe (process only)
+   */
+  router.get('/live', (_req: Request, res: Response) => {
+    res.status(200).json({
+      alive: true,
+      uptime: monitoringService.getUptime(),
+      uptimeFormatted: monitoringService.getUptimeFormatted(),
+    });
   });
 
-  // Liveness check (for Kubernetes)
-  router.get('/live', (req: Request, res: Response) => {
-    res.status(200).json({ alive: true });
-  });
-
-  // System metrics endpoint
-  router.get('/metrics', (req: Request, res: Response) => {
-    try {
-      const metrics = monitoringService.getSystemMetrics();
-      res.json(metrics);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
+  /**
+   * @route GET /api/health/metrics — JSON process/system metrics
+   * (Prometheus text exposition lives at `METRICS_PATH`, default `/metrics`)
+   */
+  router.get('/metrics', (_req: Request, res: Response) => {
+    res.json(monitoringService.getSystemMetrics());
   });
 
   return router;
