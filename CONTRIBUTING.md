@@ -268,6 +268,17 @@ For feature requests, please:
 3. Provide use cases
 4. Suggest implementation if possible
 
+## Dependency updates
+
+Dependabot opens weekly PRs for **minor and patch** updates (npm, GitHub
+Actions, Docker). Major upgrades are handled manually — they can break the
+toolchain or runtime APIs (TypeScript, ESLint, BullMQ and ioredis majors have
+all required coordinated changes here). To take a major bump:
+
+1. Update `package.json` and run `npm install`
+2. Run the full local verification below
+3. Fix any type/lint/test fallout in the same PR
+
 ## Documentation
 
 - Update README.md for user-facing changes
